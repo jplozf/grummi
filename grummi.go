@@ -51,27 +51,35 @@ const (
 	Orange
 )
 
+const (
+	ColorReset  = "\033[0m"
+	ColorRed    = "\033[31m"
+	ColorGreen  = "\033[32m"
+	ColorBlue   = "\033[34m"
+	ColorOrange = "\033[33m"
+)
+
 // ----------------------------------------------------------------------------
 // main()
 // ----------------------------------------------------------------------------
 func main() {
 	args := os.Args
 	if len(args) != 2 {
-		fmt.Printf("Usage: %s <number_of_players>\n", args[0])
+		fmt.Printf("Usage: %s <nombre_de_joueurs>\n", args[0])
 		return
 	}
 
 	numPlayers := 0
 	_, err := fmt.Sscanf(args[1], "%d", &numPlayers)
 	if err != nil || numPlayers < 2 || numPlayers > 4 {
-		fmt.Println("Number of players must be between 2 and 4.")
+		fmt.Println("Le nombre de joueurs doit être entre 2 et 4.")
 		return
 	}
 	game := InitializeGame(numPlayers)
-	currentIndex := game.DetermineFirstPlayer()
+	game.CurrentPlayerID = game.DetermineFirstPlayer()
 
 	for {
-		player := &game.Players[currentIndex]
+		player := &game.Players[game.CurrentPlayerID]
 
 		if player.IsAI {
 			game.IATurn(player)
@@ -80,44 +88,8 @@ func main() {
 		}
 
 		// On passe au joueur suivant
-		currentIndex = (currentIndex + 1) % len(game.Players)
+		game.CurrentPlayerID = (game.CurrentPlayerID + 1) % len(game.Players)
 	}
-}
-
-// ----------------------------------------------------------------------------
-// main()
-// ----------------------------------------------------------------------------
-func ExtractNewCombos(oldHand, newHand []Tile, layout [][]Tile) [][]Tile {
-	// Dans cette version simplifiée, on retourne simplement
-	// les nouvelles combinaisons formées par l'IA.
-	return layout
-}
-
-// ----------------------------------------------------------------------------
-// DetermineWinnerByPoints()
-// ----------------------------------------------------------------------------
-func (state *GameState) DetermineWinnerByPoints() {
-	winnerID := -1
-	minPoints := 1000000
-
-	fmt.Println("\n--- CALCUL DES SCORES FINAUX ---")
-	for _, p := range state.Players {
-		score := 0
-		for _, tile := range p.Hand {
-			if tile.Value == 0 {
-				score += 30 // Le Joker en main coûte cher ! (Règle officielle)
-			} else {
-				score += tile.Value
-			}
-		}
-		fmt.Printf("Joueur %d : %d points restants\n", p.ID, score)
-
-		if score < minPoints {
-			minPoints = score
-			winnerID = p.ID
-		}
-	}
-	fmt.Printf("\n🏆 Le vainqueur aux points est le JOUEUR %d !\n", winnerID)
 }
 
 // ----------------------------------------------------------------------------
@@ -227,48 +199,6 @@ func IsValidCombination(combo Combination) bool {
 }
 
 // ----------------------------------------------------------------------------
-// GeneratePossibleMoves()
-// ----------------------------------------------------------------------------
-func GeneratePossibleMoves(state GameState) []GameState {
-	var moves []GameState
-
-	// L'IA calcule la meilleure façon de vider sa main
-	bestTable, remainingHand := FindBestHandLayout(state.Players[state.CurrentPlayerID].Hand)
-
-	// Si l'IA n'a rien pu poser, elle doit piocher (on crée un état "pioche")
-	if len(bestTable) == 0 {
-		// Logique de pioche à implémenter ici
-		return moves
-	}
-
-	// Sinon, on crée un nouvel état avec les tuiles sur la table
-	newState := state
-	newState.Table = append(newState.Table, bestTable...)
-	newState.Players[state.CurrentPlayerID].Hand = remainingHand
-
-	moves = append(moves, newState)
-	return moves
-}
-
-// ----------------------------------------------------------------------------
-// FindBestMove()
-// ----------------------------------------------------------------------------
-func FindBestMove(state GameState) GameState {
-	moves := GeneratePossibleMoves(state)
-	bestMove := state
-	bestScore := -1000000 // Lowest score
-
-	for _, move := range moves {
-		score := EvaluateMove(move, state.Players[state.CurrentPlayerID].Hand)
-		if score > bestScore {
-			bestScore = score
-			bestMove = move
-		}
-	}
-	return bestMove
-}
-
-// ----------------------------------------------------------------------------
 // initializeAllTiles()
 // ----------------------------------------------------------------------------
 func initializeAllTiles() []Tile {
@@ -312,8 +242,8 @@ func dealTiles(tiles []Tile, numPlayers int) ([]Player, []Tile) {
 			name = "Humain" // Le premier joueur, c'est toi
 			isAI = false
 		} else {
-			// Les suivants sont des IA (AI 1, AI 2...)
-			name = fmt.Sprintf("AI %d", i)
+			// Les suivants sont des IA (AI#1, AI#2...)
+			name = fmt.Sprintf("AI#%d", i)
 			isAI = true
 		}
 		players[i].Name = name
@@ -337,7 +267,7 @@ func dealTiles(tiles []Tile, numPlayers int) ([]Player, []Tile) {
 // ----------------------------------------------------------------------------
 func InitializeGame(numPlayers int) GameState {
 	if numPlayers < 2 || numPlayers > 4 {
-		panic("Number of players must be between 2 and 4.")
+		panic("Le nombre de joueurs doit être entre 2 et 4.")
 	}
 
 	allTiles := initializeAllTiles()
@@ -353,18 +283,6 @@ func InitializeGame(numPlayers int) GameState {
 }
 
 // ----------------------------------------------------------------------------
-// SortHand()
-// ----------------------------------------------------------------------------
-func SortHand(hand []Tile) {
-	sort.Slice(hand, func(i, j int) bool {
-		if hand[i].Color != hand[j].Color {
-			return hand[i].Color < hand[j].Color
-		}
-		return hand[i].Value < hand[j].Value
-	})
-}
-
-// ----------------------------------------------------------------------------
 // SortTiles()
 // ----------------------------------------------------------------------------
 func SortTiles(tiles []Tile) {
@@ -376,67 +294,6 @@ func SortTiles(tiles []Tile) {
 		// 2. Si les couleurs sont identiques, comparer les valeurs
 		return tiles[i].Value < tiles[j].Value
 	})
-}
-
-// ----------------------------------------------------------------------------
-// maiFindAllRuns()
-// ----------------------------------------------------------------------------
-func FindAllRuns(hand []Tile) []Combination {
-	var runs []Combination
-	// On groupe par couleur d'abord
-	byColor := make(map[Color][]Tile)
-	jokers := 0
-	for _, t := range hand {
-		if t.Value == 0 {
-			jokers++
-			continue
-		}
-		byColor[t.Color] = append(byColor[t.Color], t)
-	}
-
-	for _, tiles := range byColor {
-		sort.Slice(tiles, func(i, j int) bool { return tiles[i].Value < tiles[j].Value })
-
-		// Fenêtre glissante pour trouver des séquences
-		// Note: Cette version simplifiée ne gère pas encore l'optimisation des Jokers
-		for i := 0; i < len(tiles); i++ {
-			for l := 3; l <= 13; l++ {
-				if i+l > len(tiles) {
-					break
-				}
-				combo := Combination(tiles[i : i+l])
-				if IsValidRun(combo) {
-					runs = append(runs, combo)
-				}
-			}
-		}
-	}
-	return runs
-}
-
-// ----------------------------------------------------------------------------
-// FindAllGroups()
-// ----------------------------------------------------------------------------
-func FindAllGroups(hand []Tile) []Combination {
-	var groups []Combination
-	byValue := make(map[int][]Tile)
-
-	for _, t := range hand {
-		if t.Value != 0 {
-			byValue[t.Value] = append(byValue[t.Value], t)
-		}
-	}
-
-	for _, tiles := range byValue {
-		if len(tiles) >= 3 {
-			// Combinaison de 3 parmi n
-			// (Il faudrait idéalement générer toutes les permutations de couleurs)
-			if IsValidGroup(Combination(tiles)) {
-				groups = append(groups, Combination(tiles))
-			}
-		}
-	}
-	return groups
 }
 
 // ----------------------------------------------------------------------------
@@ -542,26 +399,30 @@ func PrintTable(table [][]Tile) {
 	fmt.Println(strings.Repeat("═", 80))
 }
 
-// Petite fonction utilitaire pour uniformiser l'affichage d'une tuile
 // ----------------------------------------------------------------------------
 // FormatTile()
 // ----------------------------------------------------------------------------
 func FormatTile(tile Tile) string {
 	if tile.Value == 0 {
-		return "  😊 "
+		return "  😁 "
 	}
 	colorIcon := ""
+	colorCode := ""
 	switch tile.Color {
 	case Red:
 		colorIcon = "🔴"
+		colorCode = ColorRed
 	case Blue:
 		colorIcon = "🔵"
+		colorCode = ColorBlue
 	case Green:
 		colorIcon = "🟢"
+		colorCode = ColorGreen
 	case Orange:
 		colorIcon = "🟠"
+		colorCode = ColorOrange
 	}
-	return fmt.Sprintf("%2d%s ", tile.Value, colorIcon)
+	return fmt.Sprintf("%s%2d%s%s ", colorCode, tile.Value, colorIcon, ColorReset)
 }
 
 // ----------------------------------------------------------------------------
@@ -579,20 +440,6 @@ func (combo Combination) TotalValue() int {
 }
 
 // ----------------------------------------------------------------------------
-// PlayTurn()
-// ----------------------------------------------------------------------------
-func (state *GameState) PlayTurn() {
-	currentPlayer := &state.Players[state.CurrentPlayerID]
-
-	// On définit le Joueur 1 (ID 1) comme l'humain
-	if currentPlayer.ID == 1 {
-		state.HumanTurn(currentPlayer)
-	} else {
-		state.IATurn(currentPlayer) // On déplace la logique IA existante ici
-	}
-}
-
-// ----------------------------------------------------------------------------
 // HumanTurn()
 // ----------------------------------------------------------------------------
 func (state *GameState) HumanTurn(p *Player) {
@@ -602,14 +449,17 @@ func (state *GameState) HumanTurn(p *Player) {
 
 	// 2. On crée le "Vrac" : une liste plate de toutes les tuiles disponibles
 	pool := []Tile{} // On commence avec une réserve VIDE
-	pointsAddedFromHand := 0
 
 	for {
 		// On nettoie l'écran (optionnel mais recommandé)
 		fmt.Print("\033[H\033[2J")
 
+		currentValueOnTable := calculateTotalValue(state.Table)
+		backupValueOnTable := calculateTotalValue(backupTable)
+		pointsFromHand := currentValueOnTable - backupValueOnTable
+
 		// On affiche le menu propre
-		state.PrintUserMenu(p, pool, pointsAddedFromHand)
+		state.PrintUserMenu(p, pool, pointsFromHand)
 
 		// 2. Lecture de l'action
 		var action string
@@ -621,8 +471,6 @@ func (state *GameState) HumanTurn(p *Player) {
 		case "h":
 			// On déplace une tuile de la main vers la réserve (pool)
 			idx := getIndex()
-			tile := p.Hand[idx]
-			pointsAddedFromHand += tile.Value
 			pool = append(pool, p.Hand[idx])
 			p.Hand = append(p.Hand[:idx], p.Hand[idx+1:]...)
 
@@ -635,6 +483,7 @@ func (state *GameState) HumanTurn(p *Player) {
 			}
 
 			if IsValidCombination(newCombo) {
+				SortTiles(newCombo)
 				state.Table = append(state.Table, newCombo)
 				pool = removeTilesFromPool(pool, indices)
 				fmt.Println("✅ Nouvelle combinaison posée !")
@@ -670,22 +519,11 @@ func (state *GameState) HumanTurn(p *Player) {
 			}
 
 			if estOriginale {
-				pointsAddedFromHand -= tuileAChecker.Value
 				p.Hand = append(p.Hand, tuileAChecker)
 				pool = removeTilesFromPool(pool, []int{idx})
 				fmt.Println("✅ Tuile remise en main.")
 			} else {
 				fmt.Println("❌ Interdit ! Cette tuile provient de la table, vous ne pouvez pas la prendre dans votre main.")
-			}
-
-		case "z":
-			fmt.Println("🔄 Réinitialisation du tour...")
-			state.Table = cloneTable(backupTable)
-			p.Hand = cloneHand(backupHand)
-			// On vide le pool et on recommence la boucle
-			pool = []Tile{}
-			for _, combo := range state.Table {
-				pool = append(pool, combo...)
 			}
 
 		case "t":
@@ -721,15 +559,18 @@ func (state *GameState) HumanTurn(p *Player) {
 				continue // On retourne au début de la boucle pour que le joueur continue
 			}
 
+			// 1bis. Vérification : le joueur doit avoir posé au moins une tuile de sa main
+			if len(p.Hand) == len(backupHand) {
+				fmt.Println("❌ Vous n'avez posé aucune tuile de votre main. Tour annulé, vous piochez une tuile.")
+				state.Table = backupTable
+				p.Hand = backupHand
+				state.DrawTile()
+				return
+			}
+
 			// 2. Calcul du score pour la première pose (si nécessaire)
 			if !p.HasPlayedFirst {
-				currentValueOnTable := calculateTotalValue(state.Table)
-				backupValueOnTable := calculateTotalValue(backupTable)
-
-				// La différence représente les points venus UNIQUEMENT de la main
-				pointsFromHand := currentValueOnTable - backupValueOnTable
-
-				if pointsAddedFromHand < 30 {
+				if pointsFromHand < 30 {
 					fmt.Printf("❌ Premier coup invalide : vous avez posé %d points (minimum 30).\n", pointsFromHand)
 					fmt.Println("Souhaitez-vous [c]ontinuer ou [a]nnuler et piocher ?")
 
@@ -766,6 +607,9 @@ func (state *GameState) HumanTurn(p *Player) {
 	}
 }
 
+// ----------------------------------------------------------------------------
+// DetermineFirstPlayer()
+// ----------------------------------------------------------------------------
 func (state *GameState) DetermineFirstPlayer() int {
 	// Initialisation de la graine aléatoire (pour ne pas avoir toujours le même résultat)
 	rand.Seed(time.Now().UnixNano())
@@ -780,157 +624,18 @@ func (state *GameState) DetermineFirstPlayer() int {
 	return firstPlayerIndex
 }
 
+// ----------------------------------------------------------------------------
+// calculateTotalValue()
+// ----------------------------------------------------------------------------
 func calculateTotalValue(table [][]Tile) int {
 	total := 0
 	for _, combo := range table {
-		for _, tile := range combo {
-			// Attention : ici tu dois décider de la valeur du Joker.
-			// Habituellement, il prend la valeur de la tuile qu'il remplace.
-			if tile.Value == 0 {
-				// Version simple : le Joker vaut 10 (ou tu peux calculer sa valeur réelle)
-				total += 10
-			} else {
-				total += tile.Value
-			}
-		}
+		isRun := IsValidRun(combo)
+		total += GetComboValueWithJoker(combo, isRun)
 	}
 	return total
 }
 
-// ----------------------------------------------------------------------------
-// HandleAddTileToTemp()
-// ----------------------------------------------------------------------------
-func (state *GameState) HandleAddTileToTemp(p *Player, tempTable [][]Tile) int {
-	var handIdx, tableIdx int
-	fmt.Print("Index tuile en main : ")
-	fmt.Scanln(&handIdx)
-	fmt.Print("Numéro combo sur table : ")
-	fmt.Scanln(&tableIdx)
-	tableIdx -= 1
-
-	if handIdx < 0 || handIdx >= len(p.Hand) || tableIdx < 0 || tableIdx >= len(tempTable) {
-		fmt.Println("❌ Erreur d'index.")
-		return 0
-	}
-
-	tile := p.Hand[handIdx]
-	// Test de validité
-	newCombo := append(Combination(tempTable[tableIdx]), tile)
-
-	// Ici, il faudrait idéalement tester toutes les permutations car
-	// l'ordre compte pour une suite (IsValidRun)
-	if IsValidCombination(newCombo) {
-		tempTable[tableIdx] = newCombo
-		p.Hand = append(p.Hand[:handIdx], p.Hand[handIdx+1:]...)
-		return tile.Value
-	}
-
-	fmt.Println("❌ Coup invalide sur cette combinaison.")
-	return 0
-}
-
-// ----------------------------------------------------------------------------
-// HandleNewCombo()
-// ----------------------------------------------------------------------------
-func (state *GameState) HandleNewCombo(p *Player) {
-	fmt.Println("Saisissez les numéros des tuiles séparés par des virgules (ex: 0,1,2) :")
-	var input string
-	fmt.Print("> ")
-	fmt.Scanln(&input)
-
-	// On transforme la saisie en liste d'index
-	indices := parseIndices(input)
-
-	// On crée la combinaison
-	var combo Combination
-	for _, idx := range indices {
-		if idx >= 0 && idx < len(p.Hand) {
-			combo = append(combo, p.Hand[idx])
-		} else {
-			fmt.Printf("❌ Index %d invalide.\n", idx)
-			return
-		}
-	}
-
-	// Validation
-	if IsValidCombination(combo) {
-		// Logique de la règle des 30 points
-		if !p.HasPlayedFirst && combo.TotalValue() < 30 {
-			fmt.Printf("❌ Pas assez de points pour la première pose (%d/30).\n", combo.TotalValue())
-			return
-		}
-
-		// On applique le coup
-		state.Table = append(state.Table, combo)
-		p.Hand = removeTiles(p.Hand, combo)
-		state.ConsecutivePasses = 0
-		fmt.Println("✅ Combinaison ajoutée à la table !")
-	} else {
-		fmt.Println("❌ Combinaison invalide (ni une suite, ni un groupe).")
-	}
-}
-
-// ----------------------------------------------------------------------------
-// PrepareNewCombo()
-// ----------------------------------------------------------------------------
-func (state *GameState) PrepareNewCombo(p *Player) (Combination, int) {
-	fmt.Println("Saisissez les index (ex: 0,1,2) :")
-	var input string
-	fmt.Scanln(&input)
-	indices := parseIndices(input)
-
-	var combo Combination
-	for _, idx := range indices {
-		if idx >= 0 && idx < len(p.Hand) {
-			combo = append(combo, p.Hand[idx])
-		}
-	}
-
-	if IsValidCombination(combo) {
-		score := GetComboValueWithJoker(combo, IsValidRun(combo))
-		p.Hand = removeTiles(p.Hand, combo) // On retire de la main temporairement
-		return combo, score
-	}
-
-	fmt.Println("❌ Combinaison invalide.")
-	return nil, 0
-}
-
-// ----------------------------------------------------------------------------
-// HandleAddTile()
-// ----------------------------------------------------------------------------
-func (state *GameState) HandleAddTile(p *Player) {
-	var handIdx, tableIdx int
-	fmt.Print("Index de la tuile en main : ")
-	fmt.Scanln(&handIdx)
-	fmt.Print("Numéro de la combinaison sur la table (ex: 1) : ")
-	fmt.Scanln(&tableIdx)
-
-	// Ajustement de l'index (la table est affichée à partir de 1)
-	tableIdx -= 1
-
-	if handIdx < 0 || handIdx >= len(p.Hand) || tableIdx < 0 || tableIdx >= len(state.Table) {
-		fmt.Println("❌ Index invalide.")
-		return
-	}
-
-	tileToPlay := p.Hand[handIdx]
-	existingCombo := state.Table[tableIdx]
-
-	// On crée une copie temporaire pour tester la validité
-	testCombo := append(Combination{}, existingCombo...)
-	testCombo = append(testCombo, tileToPlay)
-
-	if IsValidCombination(testCombo) {
-		fmt.Println("✅ Ajout réussi !")
-		state.Table[tableIdx] = testCombo                        // On met à jour la table
-		p.Hand = append(p.Hand[:handIdx], p.Hand[handIdx+1:]...) // On retire de la main
-	} else {
-		fmt.Println("❌ Cet ajout rendrait la combinaison invalide.")
-	}
-}
-
-// Affiche : [0]:10🔴 [1]:11🔴 [2]:12🔴 ...
 // ----------------------------------------------------------------------------
 // PrintHandWithIndices()
 // ----------------------------------------------------------------------------
@@ -951,7 +656,6 @@ func (p Player) PrintHandWithIndices() {
 	fmt.Println()
 }
 
-// Transforme "0,1,2" en []int{0, 1, 2}
 // ----------------------------------------------------------------------------
 // parseIndices()
 // ----------------------------------------------------------------------------
@@ -1020,37 +724,59 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 // GetComboValueWithJoker()
 // ----------------------------------------------------------------------------
 func GetComboValueWithJoker(combo Combination, isRun bool) int {
+	if len(combo) == 0 {
+		return 0
+	}
+
+	// 1. Extraire les valeurs réelles et compter les Jokers
+	var realValues []int
+	jokers := 0
+	for _, t := range combo {
+		if t.Value == 0 {
+			jokers++
+		} else {
+			realValues = append(realValues, t.Value)
+		}
+	}
+
+	if len(realValues) == 0 {
+		return 0
+	}
+	sort.Ints(realValues)
+
 	if !isRun {
-		// C'est un groupe : on trouve la valeur d'une tuile non-joker
-		val := 0
-		for _, t := range combo {
-			if t.Value != 0 {
-				val = t.Value
-				break
-			}
-		}
-		return val * len(combo)
+		// Groupe : Toutes les tuiles valent la valeur de la tuile réelle
+		return realValues[0] * len(combo)
 	}
 
-	// C'est une suite : on trouve la valeur de départ
-	// On cherche la première tuile réelle et sa position
-	sum := 0
-	firstRealVal := 0
-	firstRealIdx := 0
-	for i, t := range combo {
-		if t.Value != 0 {
-			firstRealVal = t.Value
-			firstRealIdx = i
-			break
+	// Suite : Calculer la somme en tenant compte des trous comblés par les Jokers
+	total := 0
+	for _, v := range realValues {
+		total += v
+	}
+
+	// On remplit les trous entre les tuiles réelles
+	for i := 0; i < len(realValues)-1; i++ {
+		for v := realValues[i] + 1; v < realValues[i+1]; v++ {
+			total += v
+			jokers--
 		}
 	}
 
-	// On en déduit la valeur de la première tuile de la suite (même si c'est un joker)
-	startVal := firstRealVal - firstRealIdx
-	for i := 0; i < len(combo); i++ {
-		sum += (startVal + i)
+	// On place les jokers restants aux extrémités (priorité au haut, max 13)
+	low := realValues[0]
+	high := realValues[len(realValues)-1]
+	for jokers > 0 {
+		if high < 13 {
+			high++
+			total += high
+		} else {
+			low--
+			total += low
+		}
+		jokers--
 	}
-	return sum
+	return total
 }
 
 // ----------------------------------------------------------------------------
@@ -1088,17 +814,10 @@ func FindAllGroupsWithJokers(hand []Tile) []Combination {
 			groups = append(groups, Combination(tilesInValue))
 		}
 
-		// Cas B : 2 tuiles réelles + 1 Joker
-		if count >= 2 && jokersCount >= 1 {
+		// Cas B : 2 ou 3 tuiles réelles + 1 Joker (pour faire un groupe de 3 ou 4)
+		if (count == 2 || count == 3) && jokersCount >= 1 {
 			combo := append(Combination{}, tilesInValue...)
 			combo = append(combo, Tile{Value: 0, Color: -1}) // Ajout du Joker
-			groups = append(groups, combo)
-		}
-
-		// Cas C : 3 tuiles réelles + 1 Joker (un groupe de 4 avec Joker)
-		if count == 3 && jokersCount >= 1 {
-			combo := append(Combination{}, tilesInValue...)
-			combo = append(combo, Tile{Value: 0, Color: -1})
 			groups = append(groups, combo)
 		}
 
@@ -1126,7 +845,7 @@ func FindAllRunsWithJokers(hand []Tile) []Combination {
 	}
 
 	// 2. Pour chaque couleur, on cherche des suites
-	for color, tiles := range byColor {
+	for _, tiles := range byColor {
 		// On trie et on enlève les doublons pour faciliter la recherche de suites
 		sortedTiles := uniqueSortedTiles(tiles)
 
@@ -1153,7 +872,7 @@ func FindAllRunsWithJokers(hand []Tile) []Combination {
 					}
 					if !found {
 						// On n'a pas la tuile, on aura besoin d'un joker
-						currentCombo = append(currentCombo, Tile{Value: 0, Color: color})
+						currentCombo = append(currentCombo, Tile{Value: 0, Color: -1})
 						jokersNeeded++
 					}
 				}
@@ -1190,30 +909,8 @@ func uniqueSortedTiles(tiles []Tile) []Tile {
 }
 
 // ----------------------------------------------------------------------------
-// EvaluateMove()
+// GetAllPossibleCombos()
 // ----------------------------------------------------------------------------
-func EvaluateMove(state GameState, oldHand []Tile) int {
-	score := 0
-	// Bonus pour chaque tuile posée
-	score += (len(oldHand) - len(state.Hand)) * 10
-
-	// ÉNORME bonus si on a réussi à poser un Joker
-	for _, t := range oldHand {
-		if t.Value == 0 {
-			stillHasJoker := false
-			for _, nt := range state.Hand {
-				if nt.Value == 0 {
-					stillHasJoker = true
-				}
-			}
-			if !stillHasJoker {
-				score += 50 // On encourage l'IA à vider ses jokers
-			}
-		}
-	}
-	return score
-}
-
 func GetAllPossibleCombos(hand []Tile) []Combination {
 	var all []Combination
 	all = append(all, FindAllGroupsWithJokers(hand)...)
@@ -1221,12 +918,18 @@ func GetAllPossibleCombos(hand []Tile) []Combination {
 	return all
 }
 
+// ----------------------------------------------------------------------------
+// cloneHand()
+// ----------------------------------------------------------------------------
 func cloneHand(hand []Tile) []Tile {
 	newHand := make([]Tile, len(hand))
 	copy(newHand, hand)
 	return newHand
 }
 
+// ----------------------------------------------------------------------------
+// cloneTable()
+// ----------------------------------------------------------------------------
 func cloneTable(table [][]Tile) [][]Tile {
 	newTable := make([][]Tile, len(table))
 	for i, combo := range table {
@@ -1236,9 +939,12 @@ func cloneTable(table [][]Tile) [][]Tile {
 	return newTable
 }
 
+// ----------------------------------------------------------------------------
+// PrintTilePool()
+// ----------------------------------------------------------------------------
 func PrintTilePool(pool []Tile) {
 	if len(pool) == 0 {
-		fmt.Println("(La réserve est vide)")
+		fmt.Println("    [ Vide ]")
 		return
 	}
 	fmt.Print("RÉSERVE : ")
@@ -1248,6 +954,9 @@ func PrintTilePool(pool []Tile) {
 	fmt.Println()
 }
 
+// ----------------------------------------------------------------------------
+// getIndex()
+// ----------------------------------------------------------------------------
 func getIndex() int {
 	var idx int
 	fmt.Print("Entrez l'index : ")
@@ -1255,6 +964,9 @@ func getIndex() int {
 	return idx
 }
 
+// ----------------------------------------------------------------------------
+// getMultipleIndices()
+// ----------------------------------------------------------------------------
 func getMultipleIndices() []int {
 	fmt.Print("Entrez les index séparés par des virgules (ex: 0,1,2) : ")
 	var input string
@@ -1264,6 +976,9 @@ func getMultipleIndices() []int {
 	return parseIndices(input)
 }
 
+// ----------------------------------------------------------------------------
+// removeTilesFromPool()
+// ----------------------------------------------------------------------------
 func removeTilesFromPool(pool []Tile, indices []int) []Tile {
 	// 1. Trier les index du plus grand au plus petit
 	sort.Sort(sort.Reverse(sort.IntSlice(indices)))
@@ -1277,15 +992,34 @@ func removeTilesFromPool(pool []Tile, indices []int) []Tile {
 	return pool
 }
 
+// ----------------------------------------------------------------------------
+// PrintUserMenu()
+// ----------------------------------------------------------------------------
 func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	// Calcul du nombre de tuiles restantes
 	remainingTiles := len(state.Remaining)
 
 	fmt.Println("\n" + strings.Repeat("═", 80))
+	fmt.Println("                                                        _ ")
+	fmt.Println("                    __ _ _ __ _   _ _ __ ___  _ __ ___ (_)")
+	fmt.Println("                   / _` | '__| | | | '_ ` _ \\| '_ ` _ \\| |")
+	fmt.Println("                  | (_| | |  | |_| | | | | | | | | | | | |")
+	fmt.Println("                   \\__, |_|   \\__,_|_| |_| |_|_| |_| |_|_|")
+	fmt.Println("                   |___/                        © JPL 2026")
+	fmt.Println("\n" + strings.Repeat("═", 80))
 	// Ajout de la pioche dans le bandeau
 	fmt.Printf(" 👤 JOUEUR : %-12s | 🃏 PIOCHE : %-3d | 🏆 OUVERTURE : %s\n",
 		p.Name, remainingTiles, formatStatus(p.HasPlayedFirst))
-	fmt.Println(strings.Repeat("─", 80))
+	fmt.Print(" 👥 TUILES : ")
+	for _, other := range state.Players {
+		if other.HasPlayedFirst {
+			fmt.Printf("%s[✔ %-7s: %2d]%s  ", ColorGreen, other.Name, len(other.Hand), ColorReset)
+		} else {
+			fmt.Printf("%s[✖ %-7s: %2d]%s  ", ColorRed, other.Name, len(other.Hand), ColorReset)
+		}
+	}
+	fmt.Println() // Pour finir la ligne proprement
+	fmt.Println("\n" + strings.Repeat("─", 80))
 
 	// 1. État de la Table (Ce qui est validé)
 	fmt.Println(" 🧩 TABLE ACTUELLE :")
@@ -1317,7 +1051,9 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	fmt.Print("👉 Votre choix : ")
 }
 
-// Fonction utilitaire pour le statut
+// ----------------------------------------------------------------------------
+// formatStatus()
+// ----------------------------------------------------------------------------
 func formatStatus(b bool) string {
 	if b {
 		return "✅ FAITE"
