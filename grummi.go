@@ -499,23 +499,40 @@ func (state *GameState) HumanTurn(p *Player) {
 		case "h":
 			// We move a tile from the hand to the pool (to be placed on the table)
 			idx := getIndex()
-			pool = append(pool, p.Hand[idx])
-			p.Hand = append(p.Hand[:idx], p.Hand[idx+1:]...)
+			if idx >= 0 && idx < len(p.Hand) {
+				pool = append(pool, p.Hand[idx])
+				p.Hand = append(p.Hand[:idx], p.Hand[idx+1:]...)
+			} else {
+				fmt.Println("❌ Index invalide dans votre main.")
+				time.Sleep(1 * time.Second)
+			}
 
 		case "n":
 			// We use tiles from the pool to create a new combination on the table
 			indices := getMultipleIndices()
+			if len(indices) == 0 {
+				continue
+			}
 			var newCombo Combination
+			validIndices := true
 			for _, i := range indices {
+				if i < 0 || i >= len(pool) {
+					fmt.Printf("❌ Index invalide dans la réserve : %d\n", i)
+					validIndices = false
+					break
+				}
 				newCombo = append(newCombo, pool[i])
 			}
 
-			if IsValidCombination(newCombo) {
+			if validIndices && IsValidCombination(newCombo) {
 				SortTiles(newCombo)
 				state.Table = append(state.Table, newCombo)
 				pool = removeTilesFromPool(pool, indices)
 				fmt.Println("✅ Nouvelle combinaison posée !")
+			} else if validIndices {
+				fmt.Println("❌ Cette combinaison n'est pas valide.")
 			}
+			time.Sleep(1 * time.Second)
 
 		case "p":
 			// Cancellation: restore the initial state
@@ -696,8 +713,10 @@ func parseIndices(input string) []int {
 	parts := strings.Split(input, ",")
 	for _, p := range parts {
 		var idx int
-		fmt.Sscanf(strings.TrimSpace(p), "%d", &idx)
-		indices = append(indices, idx)
+		_, err := fmt.Sscanf(strings.TrimSpace(p), "%d", &idx)
+		if err == nil {
+			indices = append(indices, idx)
+		}
 	}
 	return indices
 }
@@ -706,50 +725,82 @@ func parseIndices(input string) []int {
 // IATurn()
 // ----------------------------------------------------------------------------
 func (state *GameState) IATurn(currentPlayer *Player) {
-	fmt.Println("L'ordinateur réfléchit...")
-	// currentPlayer := &state.Players[state.CurrentPlayerID]
+	fmt.Printf("\n🤖 %s réfléchit...\n", currentPlayer.Name)
+	initialHandSize := len(currentPlayer.Hand)
 
-	// 1. The AI analyzes its hand to find the BEST layout
-	// (This function returns all possible combinations and the remaining tiles)
+	// 1. If already opened, try to append single tiles to existing combinations on the table first
+	if currentPlayer.HasPlayedFirst {
+		state.TryAppendToTable(currentPlayer)
+	}
+
+	// 2. The AI analyzes its hand to find new complete combinations
 	bestLayout, remainingHand := FindBestHandLayout(currentPlayer.Hand)
-
-	// 2. Calculate the total value of what is about to be played
 	totalProposed := 0
 	for _, combo := range bestLayout {
-		// Use our point logic (considering they are valid groups/runs)
-		// For simplicity here, use quick detection
 		isRun := IsValidRun(combo)
 		totalProposed += GetComboValueWithJoker(combo, isRun)
 	}
 
-	// 3. Decision logic according to the 30-point rule
-	canPlay := false
-
+	canPlayNew := false
 	if !currentPlayer.HasPlayedFirst {
 		if totalProposed >= 30 {
-			canPlay = true
+			canPlayNew = true
 			currentPlayer.HasPlayedFirst = true
-			fmt.Printf("⭐ Joueur %d : Première pose validée avec %d points !\n", currentPlayer.ID, totalProposed)
+			fmt.Printf("⭐ %s : Première pose validée avec %d points !\n", currentPlayer.Name, totalProposed)
 		}
 	} else {
-		// If already opened, play as soon as at least one tile can be placed
-		if len(remainingHand) < len(currentPlayer.Hand) {
-			canPlay = true
+		if len(bestLayout) > 0 {
+			canPlayNew = true
 		}
 	}
 
-	// 4. Action!
-	if canPlay {
-		// Add the new combinations to the table
+	if canPlayNew {
 		state.Table = append(state.Table, bestLayout...)
-		// Update the player's hand
 		currentPlayer.Hand = remainingHand
-		state.ConsecutivePasses = 0 // Someone played! Reset the counter to zero.
-	} else {
-		// The player cannot play (or doesn't have enough points for the first time)
-		state.DrawTile()
-		state.ConsecutivePasses++ // Increment because the player was unable to place anything
+		// After adding new combos, try appending any leftover tiles again
+		state.TryAppendToTable(currentPlayer)
 	}
+
+	// 3. Final check: did the hand size decrease?
+	if len(currentPlayer.Hand) < initialHandSize {
+		state.ConsecutivePasses = 0
+		time.Sleep(1 * time.Second) // Pause so the player can see the AI's moves
+	} else {
+		state.DrawTile()
+		state.ConsecutivePasses++
+	}
+}
+
+// TryAppendToTable attempts to add individual tiles from the player's hand to existing table combinations.
+func (state *GameState) TryAppendToTable(p *Player) bool {
+	playedAtLeastOne := false
+	modified := true
+
+	for modified {
+		modified = false
+		for i := 0; i < len(p.Hand); i++ {
+			tile := p.Hand[i]
+			for j := 0; j < len(state.Table); j++ {
+				// Create a temporary combination to test the addition
+				newCombo := append(Combination(nil), state.Table[j]...)
+				newCombo = append(newCombo, tile)
+				SortTiles(newCombo)
+
+				if IsValidCombination(newCombo) {
+					state.Table[j] = newCombo
+					p.Hand = append(p.Hand[:i], p.Hand[i+1:]...)
+					playedAtLeastOne = true
+					modified = true
+					fmt.Printf("🤖 %s ajoute %s à une combinaison sur la table.\n", p.Name, FormatTile(tile))
+					break
+				}
+			}
+			if modified {
+				break
+			}
+		}
+	}
+	return playedAtLeastOne
 }
 
 // ----------------------------------------------------------------------------
