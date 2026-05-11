@@ -87,6 +87,20 @@ func main() {
 			game.HumanTurn(player)
 		}
 
+		// Check if the player won
+		if len(player.Hand) == 0 {
+			fmt.Printf("\n🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !\n", player.Name)
+			game.PrintFinalHands()
+			break
+		}
+
+		// Check for stalemate (no one can play and draw pile is empty)
+		if game.ConsecutivePasses >= len(game.Players) && len(game.Remaining) == 0 {
+			fmt.Println("\n🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
+			game.PrintFinalHands()
+			break
+		}
+
 		// Move to the next player
 		game.CurrentPlayerID = (game.CurrentPlayerID + 1) % len(game.Players)
 	}
@@ -397,6 +411,23 @@ func PrintTable(table [][]Tile) {
 }
 
 // ----------------------------------------------------------------------------
+// PrintFinalHands()
+// ----------------------------------------------------------------------------
+func (state *GameState) PrintFinalHands() {
+	fmt.Println("\n" + strings.Repeat("═", 80))
+	fmt.Println("📊 ÉTAT FINAL DES MAINS :")
+	for _, p := range state.Players {
+		SortTiles(p.Hand)
+		fmt.Printf(" 👤 %-10s : ", p.Name)
+		for _, tile := range p.Hand {
+			fmt.Print(FormatTile(tile))
+		}
+		fmt.Println()
+	}
+	fmt.Println(strings.Repeat("═", 80))
+}
+
+// ----------------------------------------------------------------------------
 // FormatTile()
 // ----------------------------------------------------------------------------
 func FormatTile(tile Tile) string {
@@ -493,6 +524,7 @@ func (state *GameState) HumanTurn(p *Player) {
 
 			// Then perform the mandatory draw
 			state.DrawTile()
+			state.ConsecutivePasses++
 			fmt.Println("Tour annulé, vous avez pioché une tuile.")
 			return
 
@@ -506,16 +538,16 @@ func (state *GameState) HumanTurn(p *Player) {
 			tuileAChecker := pool[idx]
 
 			// Verification: does the tile come from the original hand?
-			estOriginale := false
+			isGenuine := false
 			for _, t := range backupHand {
 				// Compare Value and Color (and possibly a unique ID if you have one)
 				if t.Value == tuileAChecker.Value && t.Color == tuileAChecker.Color {
-					estOriginale = true
+					isGenuine = true
 					break
 				}
 			}
 
-			if estOriginale {
+			if isGenuine {
 				p.Hand = append(p.Hand, tuileAChecker)
 				pool = removeTilesFromPool(pool, []int{idx})
 				fmt.Println("✅ Tuile remise en main.")
@@ -562,6 +594,7 @@ func (state *GameState) HumanTurn(p *Player) {
 				state.Table = backupTable
 				p.Hand = backupHand
 				state.DrawTile()
+				state.ConsecutivePasses++
 				return
 			}
 
@@ -578,6 +611,7 @@ func (state *GameState) HumanTurn(p *Player) {
 						state.Table = backupTable
 						p.Hand = backupHand
 						state.DrawTile()
+						state.ConsecutivePasses++
 						return
 					}
 					continue // Return to the turn so they add tiles
@@ -589,6 +623,7 @@ func (state *GameState) HumanTurn(p *Player) {
 			}
 
 			// 3. Final validation
+			state.ConsecutivePasses = 0
 			fmt.Println("✅ Tour validé. Fin du tour.")
 			return // Exit HumanTurn, state.Table already contains the new modifications
 
