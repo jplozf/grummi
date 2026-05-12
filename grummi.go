@@ -331,22 +331,49 @@ func removeTiles(hand []Tile, combo Combination) []Tile {
 // ----------------------------------------------------------------------------
 // FindBestHandLayout()
 // ----------------------------------------------------------------------------
-func FindBestHandLayout(hand []Tile) ([][]Tile, []Tile) {
+func FindBestHandLayout(hand []Tile, hoardJokers bool) ([][]Tile, []Tile) {
 	var bestTable [][]Tile
-	minTilesLeft := len(hand)
+	minRealLeft := 999
+	maxJokerLeft := -1
+
 	bestTable = [][]Tile{}
 	remainingHand := hand
 
 	// Internal recursive function
 	var backtrack func(currentHand []Tile, currentTable [][]Tile)
 	backtrack = func(currentHand []Tile, currentTable [][]Tile) {
+		realLeft := 0
+		jokerLeft := 0
+		for _, t := range currentHand {
+			if t.Value == 0 {
+				jokerLeft++
+			} else {
+				realLeft++
+			}
+		}
+
 		// Search for all possible combinations in the current hand
 		possibilities := GetAllPossibleCombos(currentHand)
 
 		// If no combination is possible, compare with our best score
 		if len(possibilities) == 0 {
-			if len(currentHand) < minTilesLeft {
-				minTilesLeft = len(currentHand)
+			// If hoarding, we prioritize keeping jokers.
+			// Otherwise, we just minimize the total count (classic solver).
+			isBetter := false
+			if hoardJokers {
+				isBetter = (realLeft < minRealLeft) || (realLeft == minRealLeft && jokerLeft > maxJokerLeft)
+			} else {
+				isBetter = (realLeft + jokerLeft) < (minRealLeft + (func() int {
+					if maxJokerLeft < 0 {
+						return 0
+					}
+					return maxJokerLeft
+				}()))
+			}
+
+			if isBetter {
+				minRealLeft = realLeft
+				maxJokerLeft = jokerLeft
 				bestTable = make([][]Tile, len(currentTable))
 				copy(bestTable, currentTable)
 				remainingHand = currentHand
@@ -359,11 +386,6 @@ func FindBestHandLayout(hand []Tile) ([][]Tile, []Tile) {
 			newHand := removeTiles(currentHand, combo)
 			newTable := append(currentTable, combo)
 			backtrack(newHand, newTable)
-
-			// Optimization: if 0 tiles left, we found a perfect solution
-			if minTilesLeft == 0 {
-				return
-			}
 		}
 	}
 
@@ -735,19 +757,36 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 
 	// 1. If already opened, try to liberate jokers and append single tiles
 	if currentPlayer.HasPlayedFirst {
-		for state.LiberateJokers(currentPlayer) {
-			// Recover as many jokers as possible in a loop
+		changed := true
+		for changed {
+			changed = false
+			if state.LiberateJokers(currentPlayer) {
+				changed = true
+			}
+			if state.TrySplitLongCombos() {
+				changed = true
+			}
+			if state.TryAppendToTable(currentPlayer) {
+				changed = true
+			}
+			if state.TrySplitAndInsert(currentPlayer) {
+				changed = true
+			}
 		}
-		state.TryAppendToTable(currentPlayer)
 	}
 
 	// 2. The AI analyzes its hand to find new complete combinations
-	bestLayout, remainingHand := FindBestHandLayout(currentPlayer.Hand)
-	totalProposed := 0
-	for _, combo := range bestLayout {
-		isRun := IsValidRun(combo)
-		totalProposed += GetComboValueWithJoker(combo, isRun)
+	// Pass 1: Try to play while hoarding Jokers
+	bestLayout, remainingHand := FindBestHandLayout(currentPlayer.Hand, true)
+
+	calculatePoints := func(layout [][]Tile) int {
+		pts := 0
+		for _, combo := range layout {
+			pts += GetComboValueWithJoker(combo, IsValidRun(combo))
+		}
+		return pts
 	}
+	totalProposed := calculatePoints(bestLayout)
 
 	canPlayNew := false
 	if !currentPlayer.HasPlayedFirst {
@@ -755,6 +794,16 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 			canPlayNew = true
 			currentPlayer.HasPlayedFirst = true
 			fmt.Printf("⭐ %s : Première pose validée avec %d points !\n", currentPlayer.Name, totalProposed)
+		} else {
+			// Pass 2: If we can't open by hoarding, try using Jokers aggressively
+			aggLayout, aggRemaining := FindBestHandLayout(currentPlayer.Hand, false)
+			if calculatePoints(aggLayout) >= 30 {
+				bestLayout = aggLayout
+				remainingHand = aggRemaining
+				canPlayNew = true
+				currentPlayer.HasPlayedFirst = true
+				fmt.Printf("⭐ %s : Ouverture validée avec Joker (%d points) !\n", currentPlayer.Name, calculatePoints(aggLayout))
+			}
 		}
 	} else {
 		if len(bestLayout) > 0 {
@@ -792,6 +841,14 @@ func (state *GameState) TryAppendToTable(p *Player) bool {
 		modified = false
 		for i := 0; i < len(p.Hand); i++ {
 			tile := p.Hand[i]
+
+			// Skip Jokers for simple greedy appending.
+			// This prevents infinite loops where the AI frees a Joker and immediately appends it back.
+			// Jokers are strategic tiles that should be handled by the layout solver to form new sets.
+			if tile.Value == 0 {
+				continue
+			}
+
 			for j := 0; j < len(state.Table); j++ {
 				// Create a temporary combination to test the addition
 				newCombo := append(Combination(nil), state.Table[j]...)
@@ -813,6 +870,83 @@ func (state *GameState) TryAppendToTable(p *Player) bool {
 		}
 	}
 	return playedAtLeastOne
+}
+
+// TrySplitLongCombos looks for runs of 6+ tiles and splits them into two combinations.
+// This creates more "ends" on the table for future tiles to be attached to.
+func (state *GameState) TrySplitLongCombos() bool {
+	for i, combo := range state.Table {
+		// Groups are max 4, so only runs can be 6+.
+		if len(combo) >= 6 {
+			// Try splitting at points that leave at least 3 tiles on each side.
+			for k := 3; k <= len(combo)-3; k++ {
+				part1 := append(Combination(nil), combo[:k]...)
+				part2 := append(Combination(nil), combo[k:]...)
+
+				if IsValidCombination(part1) && IsValidCombination(part2) {
+					state.Table = append(state.Table[:i], state.Table[i+1:]...)
+					state.Table = append(state.Table, part1, part2)
+					fmt.Printf("🤖 Scission d'une longue combinaison (%d tuiles) en deux.\n", len(combo))
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TrySplitAndInsert attempts to split a combo of 5+ tiles by inserting a tile from the hand
+// to make both resulting parts valid (length 3+).
+func (state *GameState) TrySplitAndInsert(p *Player) bool {
+	for i, combo := range state.Table {
+		if len(combo) < 5 {
+			continue
+		}
+
+		for hIdx, handTile := range p.Hand {
+			// Skip placeholder/empty tiles
+			if handTile.Color == -1 && handTile.Value == 0 {
+				continue
+			}
+
+			// Try every possible split point k
+			for k := 1; k < len(combo); k++ {
+				part1 := append(Combination(nil), combo[:k]...)
+				part2 := append(Combination(nil), combo[k:]...)
+
+				// Case A: Hand tile joins part 1, and part 2 is valid as-is
+				if len(part2) >= 3 {
+					test1 := append(Combination(nil), part1...)
+					test1 = append(test1, handTile)
+					SortTiles(test1)
+					if IsValidCombination(test1) && IsValidCombination(part2) {
+						state.Table = append(state.Table[:i], state.Table[i+1:]...)
+						state.Table = append(state.Table, test1, part2)
+						// Remove tile from hand
+						p.Hand = append(p.Hand[:hIdx], p.Hand[hIdx+1:]...)
+						fmt.Printf("🤖 %s scinde une combinaison pour insérer %s.\n", p.Name, FormatTile(handTile))
+						return true
+					}
+				}
+
+				// Case B: Hand tile joins part 2, and part 1 is valid as-is
+				if len(part1) >= 3 {
+					test2 := append(Combination(nil), part2...)
+					test2 = append(test2, handTile)
+					SortTiles(test2)
+					if IsValidCombination(test2) && IsValidCombination(part1) {
+						state.Table = append(state.Table[:i], state.Table[i+1:]...)
+						state.Table = append(state.Table, part1, test2)
+						// Remove tile from hand
+						p.Hand = append(p.Hand[:hIdx], p.Hand[hIdx+1:]...)
+						fmt.Printf("🤖 %s scinde une combinaison pour insérer %s.\n", p.Name, FormatTile(handTile))
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 // LiberateJokers attempts to recover Jokers from the table by either replacing them
