@@ -728,8 +728,16 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 	fmt.Printf("\n🤖 %s réfléchit...\n", currentPlayer.Name)
 	initialHandSize := len(currentPlayer.Hand)
 
-	// 1. If already opened, try to append single tiles to existing combinations on the table first
+	// Save current state for potential rollback if the move is invalid or doesn't improve the hand
+	backupTable := cloneTable(state.Table)
+	backupHand := cloneHand(currentPlayer.Hand)
+	backupHasPlayedFirst := currentPlayer.HasPlayedFirst
+
+	// 1. If already opened, try to liberate jokers and append single tiles
 	if currentPlayer.HasPlayedFirst {
+		for state.LiberateJokers(currentPlayer) {
+			// Recover as many jokers as possible in a loop
+		}
 		state.TryAppendToTable(currentPlayer)
 	}
 
@@ -766,6 +774,10 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 		state.ConsecutivePasses = 0
 		time.Sleep(1 * time.Second) // Pause so the player can see the AI's moves
 	} else {
+		// Rollback if no progress was made (ensures AI doesn't keep "stolen" jokers without playing)
+		state.Table = backupTable
+		currentPlayer.Hand = backupHand
+		currentPlayer.HasPlayedFirst = backupHasPlayedFirst
 		state.DrawTile()
 		state.ConsecutivePasses++
 	}
@@ -801,6 +813,61 @@ func (state *GameState) TryAppendToTable(p *Player) bool {
 		}
 	}
 	return playedAtLeastOne
+}
+
+// LiberateJokers attempts to recover Jokers from the table by either replacing them
+// with a valid tile from the hand or removing them from a combination of 4+ tiles.
+func (state *GameState) LiberateJokers(p *Player) bool {
+	if !p.HasPlayedFirst {
+		return false
+	}
+
+	for i, combo := range state.Table {
+		jokerIdx := -1
+		for k, t := range combo {
+			if t.Value == 0 {
+				jokerIdx = k
+				break
+			}
+		}
+
+		if jokerIdx == -1 {
+			continue
+		}
+
+		// 1. Try replacing with a tile from hand
+		for hIdx, handTile := range p.Hand {
+			if handTile.Value == 0 {
+				continue
+			}
+
+			newCombo := make(Combination, len(combo))
+			copy(newCombo, combo)
+			newCombo[jokerIdx] = handTile
+
+			if IsValidCombination(newCombo) {
+				SortTiles(newCombo)
+				state.Table[i] = newCombo
+				p.Hand[hIdx] = Tile{Value: 0, Color: -1}
+				fmt.Printf("🤖 %s remplace un Joker sur la table par %s.\n", p.Name, FormatTile(handTile))
+				return true
+			}
+		}
+
+		// 2. Try simple removal if the combination remains valid (length > 3)
+		if len(combo) > 3 {
+			newCombo := append(Combination(nil), combo[:jokerIdx]...)
+			newCombo = append(newCombo, combo[jokerIdx+1:]...)
+
+			if IsValidCombination(newCombo) {
+				state.Table[i] = newCombo
+				p.Hand = append(p.Hand, Tile{Value: 0, Color: -1})
+				fmt.Printf("🤖 %s libère un Joker (combinaison de %d tuiles).\n", p.Name, len(combo))
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ----------------------------------------------------------------------------
