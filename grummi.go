@@ -90,12 +90,14 @@ func main() {
 		// Check if the player won
 		if len(player.Hand) == 0 {
 			fmt.Printf("\n🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !\n", player.Name)
+			game.PrintFinalScores(player.ID)
 			game.PrintFinalHands()
 			break
 		}
 
 		// Check for stalemate (no one can play and draw pile is empty)
 		if game.ConsecutivePasses >= len(game.Players) && len(game.Remaining) == 0 {
+			game.PrintFinalScores(-1) // -1 indicates no specific winner (stalemate)
 			fmt.Println("\n🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
 			game.PrintFinalHands()
 			break
@@ -487,6 +489,21 @@ func (combo Combination) TotalValue() int {
 		sum += tile.Value
 	}
 	return sum
+}
+
+// ----------------------------------------------------------------------------
+// CalculateHandPoints()
+// ----------------------------------------------------------------------------
+func CalculateHandPoints(hand []Tile) int {
+	total := 0
+	for _, tile := range hand {
+		if tile.Value == 0 { // Joker
+			total += 30
+		} else {
+			total += tile.Value
+		}
+	}
+	return total
 }
 
 // ----------------------------------------------------------------------------
@@ -1346,4 +1363,37 @@ func formatStatus(b bool) string {
 		return "✅ FAITE"
 	}
 	return "❌ À FAIRE"
+}
+
+// ----------------------------------------------------------------------------
+// PrintFinalScores()
+// ----------------------------------------------------------------------------
+func (state *GameState) PrintFinalScores(winnerID int) {
+	fmt.Println("\n" + strings.Repeat("═", 80))
+	fmt.Println("📊 RÉSULTATS FINAUX :")
+
+	playerPoints := make(map[int]int)
+	totalOpponentPoints := 0
+
+	// Calculate points for each player's hand
+	for _, p := range state.Players {
+		handPoints := CalculateHandPoints(p.Hand)
+		if p.ID == winnerID {
+			// Winner's score is calculated later by summing opponents' points
+			playerPoints[p.ID] = 0
+		} else {
+			playerPoints[p.ID] = -handPoints
+			totalOpponentPoints += handPoints
+		}
+	}
+
+	// Assign winner's score if there is a winner
+	if winnerID != -1 {
+		playerPoints[winnerID] = totalOpponentPoints
+	}
+
+	for _, p := range state.Players {
+		fmt.Printf(" 👤 %-10s : %d points\n", p.Name, playerPoints[p.ID])
+	}
+	fmt.Println(strings.Repeat("═", 80))
 }
