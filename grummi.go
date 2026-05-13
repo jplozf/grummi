@@ -783,7 +783,7 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 			if state.TrySplitLongCombos() {
 				changed = true
 			}
-			if state.TryAppendToTable(currentPlayer) {
+			if state.TryAppendToTable(currentPlayer, false) {
 				changed = true
 			}
 			if state.TrySplitAndInsert(currentPlayer) {
@@ -831,8 +831,11 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 	if canPlayNew {
 		state.Table = append(state.Table, bestLayout...)
 		currentPlayer.Hand = remainingHand
-		// After adding new combos, try appending any leftover tiles again
-		state.TryAppendToTable(currentPlayer)
+	}
+
+	// Final cleanup: try appending any remaining tiles, now including Jokers
+	if currentPlayer.HasPlayedFirst {
+		state.TryAppendToTable(currentPlayer, true)
 	}
 
 	// 3. Final check: did the hand size decrease?
@@ -850,7 +853,7 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 }
 
 // TryAppendToTable attempts to add individual tiles from the player's hand to existing table combinations.
-func (state *GameState) TryAppendToTable(p *Player) bool {
+func (state *GameState) TryAppendToTable(p *Player, allowJokers bool) bool {
 	playedAtLeastOne := false
 	modified := true
 
@@ -861,8 +864,7 @@ func (state *GameState) TryAppendToTable(p *Player) bool {
 
 			// Skip Jokers for simple greedy appending.
 			// This prevents infinite loops where the AI frees a Joker and immediately appends it back.
-			// Jokers are strategic tiles that should be handled by the layout solver to form new sets.
-			if tile.Value == 0 {
+			if tile.Value == 0 && !allowJokers {
 				continue
 			}
 
