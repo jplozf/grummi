@@ -59,6 +59,16 @@ const (
 	ColorOrange = "\033[33m"
 )
 
+// MAJOR Version number, injected at build time
+const MAJOR = "0"
+
+// ----------------------------------------------------------------------------
+// GLOBALS
+// ----------------------------------------------------------------------------
+// GitVersion is the number of git commits and the git hash, injected at build time
+var GitVersion = "dev"
+var nTurn = 1
+
 // ----------------------------------------------------------------------------
 // main()
 // ----------------------------------------------------------------------------
@@ -582,6 +592,7 @@ func (state *GameState) HumanTurn(p *Player) {
 			state.DrawTile()
 			state.ConsecutivePasses++
 			fmt.Println("Tour annulé, vous avez pioché une tuile.")
+			nTurn++
 			return
 
 		case "m":
@@ -651,6 +662,7 @@ func (state *GameState) HumanTurn(p *Player) {
 				p.Hand = backupHand
 				state.DrawTile()
 				state.ConsecutivePasses++
+				nTurn++
 				return
 			}
 
@@ -668,6 +680,7 @@ func (state *GameState) HumanTurn(p *Player) {
 						p.Hand = backupHand
 						state.DrawTile()
 						state.ConsecutivePasses++
+						nTurn++
 						return
 					}
 					continue // Return to the turn so they add tiles
@@ -681,6 +694,7 @@ func (state *GameState) HumanTurn(p *Player) {
 			// 3. Final validation
 			state.ConsecutivePasses = 0
 			fmt.Println("✅ Tour validé. Fin du tour.")
+			nTurn++
 			return // Exit HumanTurn, state.Table already contains the new modifications
 
 		case "q":
@@ -852,6 +866,9 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 	}
 }
 
+// ****************************************************************************
+// TryAppendToTable()
+// ****************************************************************************
 // TryAppendToTable attempts to add individual tiles from the player's hand to existing table combinations.
 func (state *GameState) TryAppendToTable(p *Player, allowJokers bool) bool {
 	playedAtLeastOne := false
@@ -891,6 +908,9 @@ func (state *GameState) TryAppendToTable(p *Player, allowJokers bool) bool {
 	return playedAtLeastOne
 }
 
+// ****************************************************************************
+// TrySplitLongCombos()
+// ****************************************************************************
 // TrySplitLongCombos looks for runs of 6+ tiles and splits them into two combinations.
 // This creates more "ends" on the table for future tiles to be attached to.
 func (state *GameState) TrySplitLongCombos() bool {
@@ -914,6 +934,9 @@ func (state *GameState) TrySplitLongCombos() bool {
 	return false
 }
 
+// ****************************************************************************
+// TrySplitAndInsert()
+// ****************************************************************************
 // TrySplitAndInsert attempts to split a combo of 5+ tiles by inserting a tile from the hand
 // to make both resulting parts valid (length 3+).
 func (state *GameState) TrySplitAndInsert(p *Player) bool {
@@ -968,6 +991,9 @@ func (state *GameState) TrySplitAndInsert(p *Player) bool {
 	return false
 }
 
+// ****************************************************************************
+// LiberateJokers()
+// ****************************************************************************
 // LiberateJokers attempts to recover Jokers from the table by either replacing them
 // with a valid tile from the hand or removing them from a combination of 4+ tiles.
 func (state *GameState) LiberateJokers(p *Player) bool {
@@ -1308,11 +1334,11 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	fmt.Println("                   / _` | '__| | | | '_ ` _ \\| '_ ` _ \\| |")
 	fmt.Println("                  | (_| | |  | |_| | | | | | | | | | | | |")
 	fmt.Println("                   \\__, |_|   \\__,_|_| |_| |_|_| |_| |_|_|")
-	fmt.Println("                   |___/                        © JPL 2026")
+	fmt.Printf("                   |___/        v%s © JPL 2026\n", getFullVersion())
 	fmt.Println("\n" + strings.Repeat("═", 80))
 	// Add the draw pile to the banner
-	fmt.Printf(" 👤 JOUEUR : %-12s | 🃏 PIOCHE : %-3d | 🏆 OUVERTURE : %s\n",
-		p.Name, remainingTiles, formatStatus(p.HasPlayedFirst))
+	fmt.Printf(" 👤 JOUEUR : %-8s | 🃏 PIOCHE : %-3d | 🏆 OUVERTURE : %s | 🃏 TOUR : %d \n",
+		p.Name, remainingTiles, formatStatus(p.HasPlayedFirst), nTurn)
 	fmt.Print(" 👥 TUILES : ")
 	for _, other := range state.Players {
 		if other.HasPlayedFirst {
@@ -1362,9 +1388,9 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 // ----------------------------------------------------------------------------
 func formatStatus(b bool) string {
 	if b {
-		return "✅ FAITE"
+		return "✅ OUI"
 	}
-	return "❌ À FAIRE"
+	return "❌ NON"
 }
 
 // ----------------------------------------------------------------------------
@@ -1398,4 +1424,11 @@ func (state *GameState) PrintFinalScores(winnerID int) {
 		fmt.Printf(" 👤 %-10s : %d points\n", p.Name, playerPoints[p.ID])
 	}
 	fmt.Println(strings.Repeat("═", 80))
+}
+
+// ****************************************************************************
+// getFullVersion()
+// ****************************************************************************
+func getFullVersion() string {
+	return fmt.Sprintf("%s.%s", MAJOR, GitVersion)
 }
